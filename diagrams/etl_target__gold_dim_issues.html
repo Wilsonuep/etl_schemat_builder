@@ -29,8 +29,8 @@
     #canvas{flex:1;overflow:hidden;position:relative}
     svg{width:100%;height:100%;cursor:grab}
     svg:active{cursor:grabbing}
-    .lane-label{font-family:'DM Sans',sans-serif;font-size:11px;font-weight:700;
-                 letter-spacing:.08em;text-transform:uppercase;opacity:.4}
+    .lane-label{font-family:'DM Sans',sans-serif;font-size:12px;font-weight:700;
+                 letter-spacing:.1em;text-transform:uppercase;opacity:.5}
     .link{fill:none;stroke-width:1.8px;opacity:.28;transition:opacity .15s,stroke-width .15s}
     .link.hl{opacity:1!important;stroke-width:3px}
     .link.dim{opacity:.04!important}
@@ -116,11 +116,10 @@
       <div class="l-ar" style="border-left-color:#A78BFA"></div>via CTE
     </div>
     <hr class="ld"/>
-    <h4>Lanes</h4>
-    <div class="lr" style="font-size:11px;color:#00C9A7">① Source</div>
-    <div class="lr" style="font-size:11px;color:#A78BFA">② CTE</div>
-    <div class="lr" style="font-size:11px;color:#4F8EF7">③ Transform</div>
-    <div class="lr" style="font-size:11px;color:#F76E4F">④ Target</div>
+    <h4>Schema lanes</h4>
+    <div class="lr" style="font-size:11px;color:#00C9A7">← dbo (raw)</div>
+    <div class="lr" style="font-size:11px;color:#F7A24F">── silver</div>
+    <div class="lr" style="font-size:11px;color:#4F8EF7">── gold →</div>
   </div>
   <div id="tooltip"></div>
   <div class="controls">
@@ -130,8 +129,9 @@
   </div>
 </div>
 <script>
-const GRAPH  = {"nodes": [{"id": "dbo.public action_plans", "label": "dbo.public action_plans", "type": "source", "color": "#00C9A7", "layer": 0, "cell": -1, "notebook": "", "preview": ""}, {"id": "gold.dim_issues", "label": "gold.dim_issues", "type": "target", "color": "#F76E4F", "layer": 3, "cell": -1, "notebook": "", "preview": ""}, {"id": "__xform_silver_cleaner_69__", "label": "CREATE", "type": "transform", "color": "#4F8EF7", "layer": 2, "cell": 54, "notebook": "silver_cleaner", "preview": "CREATE OR REPLACE TABLE AB_app_data.silver.`action_plans` AS\nSELECT DISTINCT\n    CAST(id AS INT) AS id,\n    COALESCE(CAST(issue_id AS INT), -1) AS issue_id,\n\n    COALESCE(CAST(created_at AS TIMESTAMP), NULL) AS created_data,\n    COALESCE(CAST(updated_at AS TIMESTAMP), NULL) AS updated_data,\n\n    COA"}, {"id": "silver.issues", "label": "silver.issues", "type": "source", "color": "#00C9A7", "layer": 0, "cell": -1, "notebook": "", "preview": ""}, {"id": "dbo.public issues", "label": "dbo.public issues", "type": "source", "color": "#00C9A7", "layer": 0, "cell": -1, "notebook": "", "preview": ""}, {"id": "__xform_silver_cleaner_63__", "label": "CREATE", "type": "transform", "color": "#4F8EF7", "layer": 2, "cell": 48, "notebook": "silver_cleaner", "preview": "CREATE OR REPLACE TABLE AB_app_data.silver.`issues_types` AS\nSELECT DISTINCT\n\n    CAST(type_id AS INT) AS type_id,\n    CAST(type AS STRING) AS type_name\n\nFROM AB_app_data.dbo.`public issues`;"}, {"id": "silver.issues_types", "label": "silver.issues_types", "type": "source", "color": "#00C9A7", "layer": 0, "cell": -1, "notebook": "", "preview": ""}, {"id": "silver.issues_rating", "label": "silver.issues_rating", "type": "source", "color": "#00C9A7", "layer": 0, "cell": -1, "notebook": "", "preview": ""}, {"id": "__xform_gold_transformer_1__", "label": "CREATE | JOIN×3", "type": "transform", "color": "#4F8EF7", "layer": 2, "cell": 3, "notebook": "gold_transformer", "preview": "CREATE OR REPLACE TABLE AB_app_data.gold.`dim_issues` AS\nSELECT\n    iss.id,\n    iss.control_id,\n    iss.status,\n    iss.title,\n    iss.description,\n    iss.root_cause,\n    iss.created_date,\n    iss.due_date,\n    iss.identified_date,\n    iss_t.type_name,\n    iss_r.rating_name,\n    iss.remediation_dat"}, {"id": "__xform_silver_cleaner_62__", "label": "CREATE", "type": "transform", "color": "#4F8EF7", "layer": 2, "cell": 47, "notebook": "silver_cleaner", "preview": "CREATE OR REPLACE TABLE AB_app_data.silver.`issues_rating` AS\nSELECT DISTINCT\n\n    CAST(rating_id AS INT) AS rating_id,\n    CAST(rating AS STRING) AS rating_name\n\nFROM AB_app_data.dbo.`public issues`;"}, {"id": "__xform_silver_cleaner_60__", "label": "CREATE", "type": "transform", "color": "#4F8EF7", "layer": 2, "cell": 45, "notebook": "silver_cleaner", "preview": "CREATE OR REPLACE TABLE AB_app_data.silver.`issues` AS\nSELECT DISTINCT\n\n    COALESCE(CAST(id AS INT), -1) AS id,\n    COALESCE(CAST(status AS STRING), 'Unknown') AS status,\n    COALESCE(CAST(type_id AS INT), -1) AS type_id,\n    COALESCE(CAST(is_reportable AS BOOLEAN), FALSE) AS reportable,\n    COALES"}, {"id": "silver.action_plans", "label": "silver.action_plans", "type": "source", "color": "#00C9A7", "layer": 0, "cell": -1, "notebook": "", "preview": ""}], "links": [{"source": "dbo.public action_plans", "target": "__xform_silver_cleaner_69__", "label": "reads", "color": "#F7A24F"}, {"source": "__xform_silver_cleaner_69__", "target": "silver.action_plans", "label": "writes", "color": "#F7A24F"}, {"source": "silver.issues", "target": "__xform_gold_transformer_1__", "label": "reads", "color": "#4F8EF7"}, {"source": "dbo.public issues", "target": "__xform_silver_cleaner_60__", "label": "reads", "color": "#F7A24F"}, {"source": "dbo.public issues", "target": "__xform_silver_cleaner_62__", "label": "reads", "color": "#F7A24F"}, {"source": "dbo.public issues", "target": "__xform_silver_cleaner_63__", "label": "reads", "color": "#F7A24F"}, {"source": "__xform_silver_cleaner_63__", "target": "silver.issues_types", "label": "writes", "color": "#F7A24F"}, {"source": "silver.issues_types", "target": "__xform_gold_transformer_1__", "label": "reads", "color": "#4F8EF7"}, {"source": "silver.issues_rating", "target": "__xform_gold_transformer_1__", "label": "reads", "color": "#4F8EF7"}, {"source": "__xform_gold_transformer_1__", "target": "gold.dim_issues", "label": "writes", "color": "#4F8EF7"}, {"source": "__xform_silver_cleaner_62__", "target": "silver.issues_rating", "label": "writes", "color": "#F7A24F"}, {"source": "__xform_silver_cleaner_60__", "target": "silver.issues", "label": "writes", "color": "#F7A24F"}, {"source": "silver.action_plans", "target": "__xform_gold_transformer_1__", "label": "reads", "color": "#4F8EF7"}]};
-const LANES  = [{"label": "\u2460 Source", "color": "#00C9A7", "layer": 0}, {"label": "\u2461 CTE", "color": "#A78BFA", "layer": 1}, {"label": "\u2462 Transform", "color": "#4F8EF7", "layer": 2}, {"label": "\u2463 Target", "color": "#F76E4F", "layer": 3}];
+const GRAPH        = {"nodes": [{"id": "silver.issues_rating", "label": "silver.issues_rating", "type": "source", "color": "#00C9A7", "cell": -1, "notebook": "", "preview": ""}, {"id": "gold.dim_issues", "label": "gold.dim_issues", "type": "target", "color": "#F76E4F", "cell": -1, "notebook": "", "preview": ""}, {"id": "dbo.public action_plans", "label": "dbo.public action_plans", "type": "source", "color": "#00C9A7", "cell": -1, "notebook": "", "preview": ""}, {"id": "__xform_silver_cleaner_62__", "label": "CREATE", "type": "transform", "color": "#4F8EF7", "cell": 47, "notebook": "silver_cleaner", "preview": "CREATE OR REPLACE TABLE AB_app_data.silver.`issues_rating` AS\nSELECT DISTINCT\n\n    CAST(rating_id AS INT) AS rating_id,\n    CAST(rating AS STRING) AS rating_name\n\nFROM AB_app_data.dbo.`public issues`;"}, {"id": "__xform_silver_cleaner_69__", "label": "CREATE", "type": "transform", "color": "#4F8EF7", "cell": 54, "notebook": "silver_cleaner", "preview": "CREATE OR REPLACE TABLE AB_app_data.silver.`action_plans` AS\nSELECT DISTINCT\n    CAST(id AS INT) AS id,\n    COALESCE(CAST(issue_id AS INT), -1) AS issue_id,\n\n    COALESCE(CAST(created_at AS TIMESTAMP), NULL) AS created_data,\n    COALESCE(CAST(updated_at AS TIMESTAMP), NULL) AS updated_data,\n\n    COA"}, {"id": "silver.issues", "label": "silver.issues", "type": "source", "color": "#00C9A7", "cell": -1, "notebook": "", "preview": ""}, {"id": "silver.action_plans", "label": "silver.action_plans", "type": "source", "color": "#00C9A7", "cell": -1, "notebook": "", "preview": ""}, {"id": "__xform_silver_cleaner_63__", "label": "CREATE", "type": "transform", "color": "#4F8EF7", "cell": 48, "notebook": "silver_cleaner", "preview": "CREATE OR REPLACE TABLE AB_app_data.silver.`issues_types` AS\nSELECT DISTINCT\n\n    CAST(type_id AS INT) AS type_id,\n    CAST(type AS STRING) AS type_name\n\nFROM AB_app_data.dbo.`public issues`;"}, {"id": "__xform_silver_cleaner_60__", "label": "CREATE", "type": "transform", "color": "#4F8EF7", "cell": 45, "notebook": "silver_cleaner", "preview": "CREATE OR REPLACE TABLE AB_app_data.silver.`issues` AS\nSELECT DISTINCT\n\n    COALESCE(CAST(id AS INT), -1) AS id,\n    COALESCE(CAST(status AS STRING), 'Unknown') AS status,\n    COALESCE(CAST(type_id AS INT), -1) AS type_id,\n    COALESCE(CAST(is_reportable AS BOOLEAN), FALSE) AS reportable,\n    COALES"}, {"id": "silver.issues_types", "label": "silver.issues_types", "type": "source", "color": "#00C9A7", "cell": -1, "notebook": "", "preview": ""}, {"id": "dbo.public issues", "label": "dbo.public issues", "type": "source", "color": "#00C9A7", "cell": -1, "notebook": "", "preview": ""}, {"id": "__xform_gold_transformer_1__", "label": "CREATE | JOIN×3", "type": "transform", "color": "#4F8EF7", "cell": 3, "notebook": "gold_transformer", "preview": "CREATE OR REPLACE TABLE AB_app_data.gold.`dim_issues` AS\nSELECT\n    iss.id,\n    iss.control_id,\n    iss.status,\n    iss.title,\n    iss.description,\n    iss.root_cause,\n    iss.created_date,\n    iss.due_date,\n    iss.identified_date,\n    iss_t.type_name,\n    iss_r.rating_name,\n    iss.remediation_dat"}], "links": [{"source": "silver.issues_rating", "target": "__xform_gold_transformer_1__", "label": "reads", "color": "#4F8EF7"}, {"source": "dbo.public action_plans", "target": "__xform_silver_cleaner_69__", "label": "reads", "color": "#F7A24F"}, {"source": "__xform_silver_cleaner_62__", "target": "silver.issues_rating", "label": "writes", "color": "#F7A24F"}, {"source": "__xform_silver_cleaner_69__", "target": "silver.action_plans", "label": "writes", "color": "#F7A24F"}, {"source": "silver.issues", "target": "__xform_gold_transformer_1__", "label": "reads", "color": "#4F8EF7"}, {"source": "silver.action_plans", "target": "__xform_gold_transformer_1__", "label": "reads", "color": "#4F8EF7"}, {"source": "__xform_silver_cleaner_63__", "target": "silver.issues_types", "label": "writes", "color": "#F7A24F"}, {"source": "__xform_silver_cleaner_60__", "target": "silver.issues", "label": "writes", "color": "#F7A24F"}, {"source": "silver.issues_types", "target": "__xform_gold_transformer_1__", "label": "reads", "color": "#4F8EF7"}, {"source": "dbo.public issues", "target": "__xform_silver_cleaner_60__", "label": "reads", "color": "#F7A24F"}, {"source": "dbo.public issues", "target": "__xform_silver_cleaner_62__", "label": "reads", "color": "#F7A24F"}, {"source": "dbo.public issues", "target": "__xform_silver_cleaner_63__", "label": "reads", "color": "#F7A24F"}, {"source": "__xform_gold_transformer_1__", "target": "gold.dim_issues", "label": "writes", "color": "#4F8EF7"}]};
+const SCHEMA_LANES = {"dbo": 0, "silver": 1, "gold": 2};
+const SCHEMA_COLORS= {"dbo": "#00C9A7", "silver": "#F7A24F", "gold": "#4F8EF7"};
 const canvas  = document.getElementById("canvas");
 const svg     = d3.select("#svg");
 const tooltip = document.getElementById("tooltip");
@@ -150,6 +150,30 @@ const defs = svg.append("defs");
     .append("path").attr("d","M0,-5L10,0L0,5").attr("fill",color);
 });
 
+// ── Schema-aware lane assignment ─────────────────────────────────────────────
+const LAYER_W = 320;
+
+function schemaOf(node) {
+  const dot = node.label.indexOf(".");
+  if (dot > -1) return node.label.slice(0, dot).toLowerCase();
+  // Transform nodes: infer from notebook name
+  if (node.type === "transform") {
+    if (node.notebook.includes("silver")) return "silver";
+    if (node.notebook.includes("gold"))   return "gold";
+  }
+  return "dbo";
+}
+
+function laneX(node) {
+  const schema = schemaOf(node);
+  const idx    = SCHEMA_LANES[schema] ?? 0;
+  return 200 + idx * LAYER_W;
+}
+
+// Pre-compute schema on each node so drawLanes can use it
+GRAPH.nodes.forEach(n => { n._schema = schemaOf(n); });
+
+// ── Adjacency for highlight ──────────────────────────────────────────────────
 const nbrs={};
 GRAPH.nodes.forEach(n=>nbrs[n.id]=new Set());
 GRAPH.links.forEach(l=>{
@@ -161,6 +185,7 @@ const laneG=root.append("g");
 const linkG=root.append("g");
 const nodeG=root.append("g");
 
+// ── Edges ────────────────────────────────────────────────────────────────────
 const linkSel=linkG.selectAll("path").data(GRAPH.links).join("path")
   .attr("class","link").attr("stroke",d=>d.color)
   .attr("marker-end",d=>`url(#arr-${d.color.replace("#","")})`);
@@ -168,6 +193,7 @@ const linkSel=linkG.selectAll("path").data(GRAPH.links).join("path")
 const lblSel=linkG.selectAll("text").data(GRAPH.links).join("text")
   .attr("class","link-label").attr("text-anchor","middle").text(d=>d.label);
 
+// ── Nodes ────────────────────────────────────────────────────────────────────
 const nodeSel=nodeG.selectAll("g.node").data(GRAPH.nodes).join("g")
   .attr("class","node")
   .call(d3.drag()
@@ -207,6 +233,7 @@ nodeSel.each(function(n){
   }
 });
 
+// ── Hover highlight ──────────────────────────────────────────────────────────
 nodeSel
   .on("mouseover",(event,n)=>{
     const conn=nbrs[n.id]||new Set();
@@ -229,12 +256,12 @@ nodeSel
     nodeSel.classed("hl dim",false);tooltip.className="";
   });
 
-const LAYER_W=300;
+// ── Force simulation ─────────────────────────────────────────────────────────
 const sim=d3.forceSimulation(GRAPH.nodes)
   .force("link",d3.forceLink(GRAPH.links).id(d=>d.id).distance(160).strength(0.7))
   .force("charge",d3.forceManyBody().strength(-550).distanceMax(480))
   .force("collide",d3.forceCollide(d=>Math.max(d._w??80,d._h??40)/2+16))
-  .force("x",d3.forceX(d=>160+(d.layer??0)*LAYER_W).strength(0.85))
+  .force("x",d3.forceX(d=>laneX(d)).strength(0.88))
   .force("y",d3.forceY(()=>canvas.clientHeight/2).strength(0.03))
   .alphaDecay(0.022)
   .on("tick",ticked)
@@ -253,18 +280,31 @@ function ticked(){
 
 function drawLanes(){
   const ys=GRAPH.nodes.map(n=>n.y??0);
-  const minY=Math.min(...ys)-60,maxY=Math.max(...ys)+60;
-  LANES.forEach((lane,i)=>{
-    const cx=160+i*LAYER_W,lw=LAYER_W*0.82;
-    laneG.append("rect").attr("x",cx-lw/2).attr("y",minY)
+  const minY=Math.min(...ys)-60, maxY=Math.max(...ys)+60;
+
+  // Draw one band per schema that actually appears in this graph
+  const presentSchemas=[...new Set(GRAPH.nodes.map(n=>n._schema))]
+    .filter(s=>SCHEMA_LANES[s]!==undefined)
+    .sort((a,b)=>SCHEMA_LANES[a]-SCHEMA_LANES[b]);
+
+  presentSchemas.forEach(schema=>{
+    const idx   = SCHEMA_LANES[schema];
+    const color = SCHEMA_COLORS[schema] ?? "#888";
+    const cx    = 200 + idx * LAYER_W;
+    const lw    = LAYER_W * 0.84;
+
+    laneG.append("rect")
+      .attr("x",cx-lw/2).attr("y",minY)
       .attr("width",lw).attr("height",maxY-minY)
-      .attr("rx",12).attr("fill",lane.color).attr("opacity",0.04);
-    laneG.append("rect").attr("x",cx-lw/2).attr("y",minY)
-      .attr("width",lw).attr("height",26)
-      .attr("rx",12).attr("fill",lane.color).attr("opacity",0.13);
+      .attr("rx",12).attr("fill",color).attr("opacity",0.04);
+    laneG.append("rect")
+      .attr("x",cx-lw/2).attr("y",minY)
+      .attr("width",lw).attr("height",28)
+      .attr("rx",12).attr("fill",color).attr("opacity",0.14);
     laneG.append("text").attr("class","lane-label")
-      .attr("x",cx).attr("y",minY+17)
-      .attr("text-anchor","middle").attr("fill",lane.color).text(lane.label);
+      .attr("x",cx).attr("y",minY+19)
+      .attr("text-anchor","middle").attr("fill",color)
+      .text(schema.toUpperCase());
   });
   fitView();
 }

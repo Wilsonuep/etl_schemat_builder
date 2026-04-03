@@ -12,7 +12,7 @@ Menu flow:
     ├── Yes (full scope)
     │   ├── Full diagram        → one HTML, all notebooks combined
     │   └── Breakdown by target
-    │       ├── Full scope      → one HTML per target (all notebooks, gold targets only)
+    │       ├── Full scope      → one HTML per target (all notebooks)
     │       ├── Gold notebook   → one HTML per gold target (includes silver steps, no silver targets)
     │       └── Specific target → pick from list → one HTML, all notebooks, one target
     └── Let me choose (pick one notebook)
@@ -56,13 +56,18 @@ NOTEBOOK_EDGE_COLORS = {
 }
 DEFAULT_EDGE_COLOR = "#4F8EF7"
 
-LAYER_ORDER = {"source": 0, "cte": 1, "transform": 2, "target": 3}
-LANES = [
-    {"label": "① Source",    "color": "#00C9A7", "layer": 0},
-    {"label": "② CTE",       "color": "#A78BFA", "layer": 1},
-    {"label": "③ Transform", "color": "#4F8EF7", "layer": 2},
-    {"label": "④ Target",    "color": "#F76E4F", "layer": 3},
-]
+# Schema → horizontal lane index (left to right)
+# Extend this when adding new schemas
+SCHEMA_LANES = {
+    "dbo":    0,
+    "silver": 1,
+    "gold":   2,
+}
+SCHEMA_COLORS = {
+    "dbo":    "#00C9A7",
+    "silver": "#F7A24F",
+    "gold":   "#4F8EF7",
+}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. CLI HELPERS
@@ -71,10 +76,6 @@ LANES = [
 def hr(char="─", w=58): print(char * w)
 
 def ask(prompt, options, allow_name=False):
-    """
-    Numbered menu. If allow_name=True also accepts option text by typing it.
-    Returns 0-based index of chosen option.
-    """
     print(f"\n  {prompt}")
     for i, opt in enumerate(options, 1):
         print(f"    [{i}] {opt}")
@@ -85,8 +86,7 @@ def ask(prompt, options, allow_name=False):
             if 0 <= idx < len(options):
                 return idx
         elif allow_name:
-            matches = [i for i, o in enumerate(options)
-                       if raw.lower() in o.lower()]
+            matches = [i for i, o in enumerate(options) if raw.lower() in o.lower()]
             if len(matches) == 1:
                 return matches[0]
             elif len(matches) > 1:
@@ -139,7 +139,6 @@ def extract_sql(cells, notebook_name):
             continue
         src = cell.get("source", [])
         src = "".join(src) if isinstance(src, list) else src
-
         m = _MAGIC_SQL_RE.search(src)
         if m:
             fragments.append(SQLFragment(idx, m.group(1).strip(), "magic", notebook_name))
@@ -186,20 +185,16 @@ def normalize_table(t):
 
 def parse_fragment(frag):
     lin = TableLineage(cell_index=frag.source_cell_index,
-                       raw_sql=frag.raw_sql,
-                       notebook_name=frag.notebook_name)
+                       raw_sql=frag.raw_sql, notebook_name=frag.notebook_name)
     try:
         stmts = sqlglot.parse(frag.raw_sql, dialect=SQL_DIALECT,
                               error_level=sqlglot.ErrorLevel.WARN)
     except Exception as e:
         lin.parse_error = str(e)
         return lin
-
     for stmt in stmts:
-        if stmt is None:
-            continue
-        if isinstance(stmt, exp.Select):
-            lin.operations.append("SELECT")
+        if stmt is None: continue
+        if isinstance(stmt, exp.Select):   lin.operations.append("SELECT")
         elif isinstance(stmt, exp.Insert):
             lin.operations.append("INSERT")
             tgt = stmt.find(exp.Table)
@@ -208,23 +203,16 @@ def parse_fragment(frag):
             lin.operations.append("CREATE")
             tgt = stmt.find(exp.Table)
             if tgt: lin.target_table = normalize_table(tgt)
-        elif isinstance(stmt, exp.Merge):
-            lin.operations.append("MERGE")
-
-        for cte in stmt.find_all(exp.CTE):
-            lin.ctes.append(cte.alias)
-
+        elif isinstance(stmt, exp.Merge):  lin.operations.append("MERGE")
+        for cte in stmt.find_all(exp.CTE): lin.ctes.append(cte.alias)
         joins = list(stmt.find_all(exp.Join))
-        if joins:
-            lin.operations.append(f"JOIN×{len(joins)}")
-
+        if joins: lin.operations.append(f"JOIN×{len(joins)}")
         cte_names = set(lin.ctes)
         for table in stmt.find_all(exp.Table):
             name = normalize_table(table)
             if name and name not in cte_names and name != lin.target_table:
                 if name not in lin.source_tables:
                     lin.source_tables.append(name)
-
     lin.operations = list(dict.fromkeys(lin.operations))
     return lin
 
@@ -238,30 +226,18 @@ except ImportError:
     sys.exit("❌  networkx not installed. Run: pip install networkx")
 
 def build_graph(lineages, notebook_edge_map=None):
-    """
-    Build a DiGraph from TableLineage objects.
-    - Transform nodes are unique per notebook+index to avoid collision.
-    - Source/target table nodes are shared (deduplicated by table name),
-      which is what allows cross-notebook lineage to connect correctly.
-    """
     G = nx.DiGraph()
-
     def ec(nb_name):
-        if notebook_edge_map:
-            return notebook_edge_map.get(nb_name, DEFAULT_EDGE_COLOR)
-        return DEFAULT_EDGE_COLOR
+        return (notebook_edge_map or {}).get(nb_name, DEFAULT_EDGE_COLOR)
 
     for i, lin in enumerate(lineages):
-        if lin.parse_error:
-            continue
-
+        if lin.parse_error: continue
         ops_label    = " | ".join(lin.operations) if lin.operations else "SELECT"
         transform_id = f"__xform_{lin.notebook_name}_{i}__"
         color        = ec(lin.notebook_name)
 
         if not G.has_node(transform_id):
-            G.add_node(transform_id,
-                       label=ops_label, node_type="transform",
+            G.add_node(transform_id, label=ops_label, node_type="transform",
                        cell=lin.cell_index, notebook=lin.notebook_name,
                        sql_preview=lin.raw_sql[:300])
 
@@ -276,64 +252,43 @@ def build_graph(lineages, notebook_edge_map=None):
             if not G.has_node(cte_id):
                 G.add_node(cte_id, label=f"CTE: {cte}", node_type="cte",
                            cell=-1, notebook=lin.notebook_name, sql_preview="")
-            G.add_edge(cte_id, transform_id, label="via CTE",
-                       color=NODE_COLORS["cte"])
+            G.add_edge(cte_id, transform_id, label="via CTE", color=NODE_COLORS["cte"])
 
         if lin.target_table:
             if not G.has_node(lin.target_table):
-                G.add_node(lin.target_table,
-                           label=lin.target_table, node_type="target",
+                G.add_node(lin.target_table, label=lin.target_table, node_type="target",
                            cell=-1, notebook="", sql_preview="")
             G.add_edge(transform_id, lin.target_table, label="writes", color=color)
         else:
             result_id = f"__result_{lin.notebook_name}_{i}__"
-            G.add_node(result_id,
-                       label=f"Result / Cell {lin.cell_index}",
-                       node_type="target",
-                       cell=lin.cell_index, notebook=lin.notebook_name, sql_preview="")
+            G.add_node(result_id, label=f"Result / Cell {lin.cell_index}",
+                       node_type="target", cell=lin.cell_index,
+                       notebook=lin.notebook_name, sql_preview="")
             G.add_edge(transform_id, result_id, label="returns", color=color)
-
     return G
 
-
 def subgraph_for_target(G_full, target_id):
-    """All ancestors of target_id + target_id itself."""
-    if not G_full.has_node(target_id):
-        return None
+    if not G_full.has_node(target_id): return None
     nodes = nx.ancestors(G_full, target_id)
     nodes.add(target_id)
     return G_full.subgraph(nodes).copy()
 
-
 def subgraph_for_target_hide_silver_targets(G_full, target_id, silver_targets):
-    """
-    Subgraph for target_id that includes silver steps but strips silver
-    target nodes (they become invisible intermediates — their transforms
-    and sources are still included so the path is complete).
-    """
-    if not G_full.has_node(target_id):
-        return None
+    if not G_full.has_node(target_id): return None
     nodes = nx.ancestors(G_full, target_id)
     nodes.add(target_id)
-    # Remove silver target nodes — keep everything else
     nodes -= silver_targets
     return G_full.subgraph(nodes).copy()
 
-
 def get_targets_for_notebook(G, notebook_name):
-    """Target table node IDs whose lineage originates in notebook_name."""
     result = []
     for node_id, data in G.nodes(data=True):
-        if data.get("node_type") != "target":
-            continue
-        # Walk predecessors — if any transform belongs to this notebook, include
+        if data.get("node_type") != "target": continue
         for pred in nx.ancestors(G, node_id):
-            pdata = G.nodes[pred]
-            if pdata.get("notebook") == notebook_name:
+            if G.nodes[pred].get("notebook") == notebook_name:
                 result.append(node_id)
                 break
     return sorted(set(result))
-
 
 def graph_to_json(G):
     nodes, links = [], []
@@ -343,7 +298,6 @@ def graph_to_json(G):
             "label":    data.get("label", node_id),
             "type":     data.get("node_type", "source"),
             "color":    NODE_COLORS.get(data.get("node_type", "source"), "#888"),
-            "layer":    LAYER_ORDER.get(data.get("node_type", "source"), 0),
             "cell":     data.get("cell", -1),
             "notebook": data.get("notebook", ""),
             "preview":  data.get("sql_preview", ""),
@@ -360,13 +314,14 @@ def graph_to_json(G):
 # 6. HTML RENDERER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_html(title, subtitle, graph_json_str,
-                accent_color="#4F8EF7", stats=None):
+def render_html(title, subtitle, graph_json_str, accent_color="#4F8EF7", stats=None):
     stats      = stats or {}
     frag_count = stats.get("frags",  "—")
     ok_count   = stats.get("ok",     "—")
     err_count  = stats.get("errors",  0)
-    lanes_js   = json.dumps(LANES)
+
+    schema_lanes_js  = json.dumps(SCHEMA_LANES)
+    schema_colors_js = json.dumps(SCHEMA_COLORS)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -399,8 +354,8 @@ def render_html(title, subtitle, graph_json_str,
     #canvas{{flex:1;overflow:hidden;position:relative}}
     svg{{width:100%;height:100%;cursor:grab}}
     svg:active{{cursor:grabbing}}
-    .lane-label{{font-family:'DM Sans',sans-serif;font-size:11px;font-weight:700;
-                 letter-spacing:.08em;text-transform:uppercase;opacity:.4}}
+    .lane-label{{font-family:'DM Sans',sans-serif;font-size:12px;font-weight:700;
+                 letter-spacing:.1em;text-transform:uppercase;opacity:.5}}
     .link{{fill:none;stroke-width:1.8px;opacity:.28;transition:opacity .15s,stroke-width .15s}}
     .link.hl{{opacity:1!important;stroke-width:3px}}
     .link.dim{{opacity:.04!important}}
@@ -486,11 +441,10 @@ def render_html(title, subtitle, graph_json_str,
       <div class="l-ar" style="border-left-color:#A78BFA"></div>via CTE
     </div>
     <hr class="ld"/>
-    <h4>Lanes</h4>
-    <div class="lr" style="font-size:11px;color:#00C9A7">① Source</div>
-    <div class="lr" style="font-size:11px;color:#A78BFA">② CTE</div>
-    <div class="lr" style="font-size:11px;color:#4F8EF7">③ Transform</div>
-    <div class="lr" style="font-size:11px;color:#F76E4F">④ Target</div>
+    <h4>Schema lanes</h4>
+    <div class="lr" style="font-size:11px;color:#00C9A7">← dbo (raw)</div>
+    <div class="lr" style="font-size:11px;color:#F7A24F">── silver</div>
+    <div class="lr" style="font-size:11px;color:#4F8EF7">── gold →</div>
   </div>
   <div id="tooltip"></div>
   <div class="controls">
@@ -500,8 +454,9 @@ def render_html(title, subtitle, graph_json_str,
   </div>
 </div>
 <script>
-const GRAPH  = {graph_json_str};
-const LANES  = {lanes_js};
+const GRAPH        = {graph_json_str};
+const SCHEMA_LANES = {schema_lanes_js};
+const SCHEMA_COLORS= {schema_colors_js};
 const canvas  = document.getElementById("canvas");
 const svg     = d3.select("#svg");
 const tooltip = document.getElementById("tooltip");
@@ -520,6 +475,30 @@ const defs = svg.append("defs");
     .append("path").attr("d","M0,-5L10,0L0,5").attr("fill",color);
 }});
 
+// ── Schema-aware lane assignment ─────────────────────────────────────────────
+const LAYER_W = 320;
+
+function schemaOf(node) {{
+  const dot = node.label.indexOf(".");
+  if (dot > -1) return node.label.slice(0, dot).toLowerCase();
+  // Transform nodes: infer from notebook name
+  if (node.type === "transform") {{
+    if (node.notebook.includes("silver")) return "silver";
+    if (node.notebook.includes("gold"))   return "gold";
+  }}
+  return "dbo";
+}}
+
+function laneX(node) {{
+  const schema = schemaOf(node);
+  const idx    = SCHEMA_LANES[schema] ?? 0;
+  return 200 + idx * LAYER_W;
+}}
+
+// Pre-compute schema on each node so drawLanes can use it
+GRAPH.nodes.forEach(n => {{ n._schema = schemaOf(n); }});
+
+// ── Adjacency for highlight ──────────────────────────────────────────────────
 const nbrs={{}};
 GRAPH.nodes.forEach(n=>nbrs[n.id]=new Set());
 GRAPH.links.forEach(l=>{{
@@ -531,6 +510,7 @@ const laneG=root.append("g");
 const linkG=root.append("g");
 const nodeG=root.append("g");
 
+// ── Edges ────────────────────────────────────────────────────────────────────
 const linkSel=linkG.selectAll("path").data(GRAPH.links).join("path")
   .attr("class","link").attr("stroke",d=>d.color)
   .attr("marker-end",d=>`url(#arr-${{d.color.replace("#","")}})`);
@@ -538,6 +518,7 @@ const linkSel=linkG.selectAll("path").data(GRAPH.links).join("path")
 const lblSel=linkG.selectAll("text").data(GRAPH.links).join("text")
   .attr("class","link-label").attr("text-anchor","middle").text(d=>d.label);
 
+// ── Nodes ────────────────────────────────────────────────────────────────────
 const nodeSel=nodeG.selectAll("g.node").data(GRAPH.nodes).join("g")
   .attr("class","node")
   .call(d3.drag()
@@ -577,6 +558,7 @@ nodeSel.each(function(n){{
   }}
 }});
 
+// ── Hover highlight ──────────────────────────────────────────────────────────
 nodeSel
   .on("mouseover",(event,n)=>{{
     const conn=nbrs[n.id]||new Set();
@@ -599,12 +581,12 @@ nodeSel
     nodeSel.classed("hl dim",false);tooltip.className="";
   }});
 
-const LAYER_W=300;
+// ── Force simulation ─────────────────────────────────────────────────────────
 const sim=d3.forceSimulation(GRAPH.nodes)
   .force("link",d3.forceLink(GRAPH.links).id(d=>d.id).distance(160).strength(0.7))
   .force("charge",d3.forceManyBody().strength(-550).distanceMax(480))
   .force("collide",d3.forceCollide(d=>Math.max(d._w??80,d._h??40)/2+16))
-  .force("x",d3.forceX(d=>160+(d.layer??0)*LAYER_W).strength(0.85))
+  .force("x",d3.forceX(d=>laneX(d)).strength(0.88))
   .force("y",d3.forceY(()=>canvas.clientHeight/2).strength(0.03))
   .alphaDecay(0.022)
   .on("tick",ticked)
@@ -623,18 +605,31 @@ function ticked(){{
 
 function drawLanes(){{
   const ys=GRAPH.nodes.map(n=>n.y??0);
-  const minY=Math.min(...ys)-60,maxY=Math.max(...ys)+60;
-  LANES.forEach((lane,i)=>{{
-    const cx=160+i*LAYER_W,lw=LAYER_W*0.82;
-    laneG.append("rect").attr("x",cx-lw/2).attr("y",minY)
+  const minY=Math.min(...ys)-60, maxY=Math.max(...ys)+60;
+
+  // Draw one band per schema that actually appears in this graph
+  const presentSchemas=[...new Set(GRAPH.nodes.map(n=>n._schema))]
+    .filter(s=>SCHEMA_LANES[s]!==undefined)
+    .sort((a,b)=>SCHEMA_LANES[a]-SCHEMA_LANES[b]);
+
+  presentSchemas.forEach(schema=>{{
+    const idx   = SCHEMA_LANES[schema];
+    const color = SCHEMA_COLORS[schema] ?? "#888";
+    const cx    = 200 + idx * LAYER_W;
+    const lw    = LAYER_W * 0.84;
+
+    laneG.append("rect")
+      .attr("x",cx-lw/2).attr("y",minY)
       .attr("width",lw).attr("height",maxY-minY)
-      .attr("rx",12).attr("fill",lane.color).attr("opacity",0.04);
-    laneG.append("rect").attr("x",cx-lw/2).attr("y",minY)
-      .attr("width",lw).attr("height",26)
-      .attr("rx",12).attr("fill",lane.color).attr("opacity",0.13);
+      .attr("rx",12).attr("fill",color).attr("opacity",0.04);
+    laneG.append("rect")
+      .attr("x",cx-lw/2).attr("y",minY)
+      .attr("width",lw).attr("height",28)
+      .attr("rx",12).attr("fill",color).attr("opacity",0.14);
     laneG.append("text").attr("class","lane-label")
-      .attr("x",cx).attr("y",minY+17)
-      .attr("text-anchor","middle").attr("fill",lane.color).text(lane.label);
+      .attr("x",cx).attr("y",minY+19)
+      .attr("text-anchor","middle").attr("fill",color)
+      .text(schema.toUpperCase());
   }});
   fitView();
 }}
@@ -663,7 +658,7 @@ function moveTip(event){{
 </html>"""
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 7. SAVE HELPER
+# 7. SAVE HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
 def safe_filename(s):
@@ -674,24 +669,20 @@ def save_html(path, html):
     print(f"     ✅  {Path(path).name}")
 
 def make_html(G, title, subtitle, accent_color, stats=None):
-    return render_html(
-        title=title, subtitle=subtitle,
-        graph_json_str=graph_to_json(G),
-        accent_color=accent_color, stats=stats,
-    )
+    return render_html(title=title, subtitle=subtitle,
+                       graph_json_str=graph_to_json(G),
+                       accent_color=accent_color, stats=stats)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 8. MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run():
-    # ── Banner ────────────────────────────────────────────────────────────────
     print()
     hr("═")
     print("  ETL LINEAGE DIAGRAM BUILDER")
     hr("═")
 
-    # ── Load ALL notebooks upfront (needed for cross-notebook lineage) ─────────
     print("\n  Loading notebooks...")
     hr()
     all_nb = []
@@ -699,14 +690,12 @@ def run():
         name, cells = load_notebook(p)
         if cells:
             all_nb.append((name, cells))
-
     if not all_nb:
         sys.exit("\n❌  No notebooks loaded. Check NOTEBOOKS_DIR.")
 
-    # ── Parse ALL notebooks upfront ───────────────────────────────────────────
     print("\n  Parsing SQL...")
     hr()
-    nb_lineages = {}  # name → [TableLineage]
+    nb_lineages = {}
     nb_stats    = {}
     for name, cells in all_nb:
         frags    = extract_sql(cells, name)
@@ -720,25 +709,20 @@ def run():
         s = nb_stats[name]
         print(f"  {name}: {s['frags']} fragments, {s['ok']} parsed, {s['errors']} errors")
 
-    # Combined graph (all notebooks — used for cross-notebook lineage)
     all_lineages = [l for lins in nb_lineages.values() for l in lins]
-    G_all        = build_graph(all_lineages, NOTEBOOK_EDGE_COLORS)
-
-    # Per-notebook graphs
-    G_per = {
+    G_all  = build_graph(all_lineages, NOTEBOOK_EDGE_COLORS)
+    G_per  = {
         name: build_graph(lins, {name: NOTEBOOK_EDGE_COLORS.get(name, DEFAULT_EDGE_COLOR)})
         for name, lins in nb_lineages.items()
     }
 
-    # Silver target nodes (intermediate targets we may want to hide)
-    silver_nb     = [n for n in nb_lineages if n != GOLD_NOTEBOOK]
+    silver_nb      = [n for n in nb_lineages if n != GOLD_NOTEBOOK]
     silver_targets = set()
     for nb in silver_nb:
         for node_id, data in G_per.get(nb, nx.DiGraph()).nodes(data=True):
             if data.get("node_type") == "target":
                 silver_targets.add(node_id)
 
-    # Gold targets = targets in the combined graph produced by gold notebook
     gold_targets = get_targets_for_notebook(G_all, GOLD_NOTEBOOK)
 
     # ── Q1: Scope ─────────────────────────────────────────────────────────────
@@ -752,104 +736,74 @@ def run():
     # BRANCH A: Full scope
     # ══════════════════════════════════════════════════════════════════════════
     if scope == 0:
-
         view = ask(
             "What do you want to generate?",
             ["Full diagram  (one file, everything combined)",
              "Breakdown by target table"]
         )
 
-        # ── A1: Full combined diagram ─────────────────────────────────────────
         if view == 0:
-            print()
-            hr()
-            print("  Generating full combined diagram...")
-            hr()
+            print(); hr()
+            print("  Generating full combined diagram..."); hr()
             combined_stats = {
                 "frags":  sum(s["frags"]  for s in nb_stats.values()),
                 "ok":     sum(s["ok"]     for s in nb_stats.values()),
                 "errors": sum(s["errors"] for s in nb_stats.values()),
             }
-            html = make_html(
-                G_all,
-                title        = "ETL Lineage — Full Scope",
-                subtitle     = f"{'  +  '.join(nb_lineages)} · {G_all.number_of_nodes()} nodes",
-                accent_color = DEFAULT_EDGE_COLOR,
-                stats        = combined_stats,
-            )
+            html = make_html(G_all,
+                title="ETL Lineage — Full Scope",
+                subtitle=f"{'  +  '.join(nb_lineages)} · {G_all.number_of_nodes()} nodes",
+                accent_color=DEFAULT_EDGE_COLOR, stats=combined_stats)
             save_html(OUTPUT_DIR / "etl_full_scope.html", html)
 
-        # ── A2: Breakdown by target ───────────────────────────────────────────
         elif view == 1:
-
             breakdown = ask(
                 "Which targets should be included in the breakdown?",
                 ["Full scope  — one diagram per target (all notebooks)",
-                 "Gold notebook only  — gold targets, including silver steps but not silver targets",
+                 "Gold notebook only  — gold targets, silver steps included, silver targets hidden",
                  "Specific target  — pick one target from the list"]
             )
 
-            # ── A2a: Full scope breakdown ─────────────────────────────────────
             if breakdown == 0:
-                all_targets = sorted(
-                    n for n, d in G_all.nodes(data=True)
-                    if d.get("node_type") == "target"
-                )
-                print()
-                hr()
-                print(f"  Generating {len(all_targets)} target diagram(s)...")
-                hr()
+                all_targets = sorted(n for n, d in G_all.nodes(data=True)
+                                     if d.get("node_type") == "target")
+                print(); hr()
+                print(f"  Generating {len(all_targets)} target diagram(s)..."); hr()
                 for tgt in all_targets:
                     sub = subgraph_for_target(G_all, tgt)
-                    if not sub or sub.number_of_nodes() == 0:
-                        continue
+                    if not sub or sub.number_of_nodes() == 0: continue
                     ec = NOTEBOOK_EDGE_COLORS.get(GOLD_NOTEBOOK, DEFAULT_EDGE_COLOR) \
                          if tgt in gold_targets else DEFAULT_EDGE_COLOR
-                    html = make_html(
-                        sub,
-                        title        = f"ETL — {tgt}",
-                        subtitle     = f"Full scope · {sub.number_of_nodes()} nodes",
-                        accent_color = ec,
-                        stats        = {"frags":"—","ok":sub.number_of_nodes(),"errors":0},
-                    )
-                    fname = f"etl_full__{safe_filename(tgt)}.html"
-                    save_html(OUTPUT_DIR / fname, html)
+                    html = make_html(sub,
+                        title=f"ETL — {tgt}",
+                        subtitle=f"Full scope · {sub.number_of_nodes()} nodes",
+                        accent_color=ec,
+                        stats={"frags":"—","ok":sub.number_of_nodes(),"errors":0})
+                    save_html(OUTPUT_DIR / f"etl_full__{safe_filename(tgt)}.html", html)
 
-            # ── A2b: Gold notebook breakdown (hide silver targets) ────────────
             elif breakdown == 1:
-                print()
-                hr()
+                print(); hr()
                 print(f"  Generating {len(gold_targets)} gold target diagram(s)...")
-                print(f"  (Silver steps included; silver target nodes hidden)")
-                hr()
+                print(f"  (Silver steps included; silver target nodes hidden)"); hr()
                 for tgt in sorted(gold_targets):
-                    sub = subgraph_for_target_hide_silver_targets(
-                        G_all, tgt, silver_targets)
-                    if not sub or sub.number_of_nodes() == 0:
-                        continue
+                    sub = subgraph_for_target_hide_silver_targets(G_all, tgt, silver_targets)
+                    if not sub or sub.number_of_nodes() == 0: continue
                     ec = NOTEBOOK_EDGE_COLORS.get(GOLD_NOTEBOOK, DEFAULT_EDGE_COLOR)
-                    html = make_html(
-                        sub,
-                        title        = f"ETL — {tgt}",
-                        subtitle     = f"Gold view · {sub.number_of_nodes()} nodes",
-                        accent_color = ec,
-                        stats        = {"frags":"—","ok":sub.number_of_nodes(),"errors":0},
-                    )
-                    fname = f"etl_gold__{safe_filename(tgt)}.html"
-                    save_html(OUTPUT_DIR / fname, html)
+                    html = make_html(sub,
+                        title=f"ETL — {tgt}",
+                        subtitle=f"Gold view · {sub.number_of_nodes()} nodes",
+                        accent_color=ec,
+                        stats={"frags":"—","ok":sub.number_of_nodes(),"errors":0})
+                    save_html(OUTPUT_DIR / f"etl_gold__{safe_filename(tgt)}.html", html)
 
-            # ── A2c: Pick a specific target ───────────────────────────────────
             elif breakdown == 2:
-                all_targets = sorted(
-                    n for n, d in G_all.nodes(data=True)
-                    if d.get("node_type") == "target"
-                )
+                all_targets = sorted(n for n, d in G_all.nodes(data=True)
+                                     if d.get("node_type") == "target")
                 print()
                 print("  Available targets:")
                 for i, t in enumerate(all_targets, 1):
                     print(f"    [{i:>3}] {t}")
                 print()
-
                 tgt = None
                 while tgt is None:
                     raw = input("  › Enter number or table name: ").strip()
@@ -861,35 +815,26 @@ def run():
                             else:
                                 print(f"  ✗  Number out of range (1–{len(all_targets)})")
                         else:
-                            # Fuzzy name match
-                            matches = [t for t in all_targets
-                                       if raw.lower() in t.lower()]
-                            if len(matches) == 1:
-                                tgt = matches[0]
-                            elif len(matches) == 0:
-                                print(f"  ✗  No target matches '{raw}'")
+                            matches = [t for t in all_targets if raw.lower() in t.lower()]
+                            if len(matches) == 1:   tgt = matches[0]
+                            elif len(matches) == 0: print(f"  ✗  No target matches '{raw}'")
                             else:
                                 print(f"  ✗  Ambiguous — matched:")
-                                for m in matches:
-                                    print(f"       {m}")
+                                for m in matches: print(f"       {m}")
                     except Exception as ex:
                         print(f"  ✗  Invalid input: {ex}")
 
-                print()
-                hr()
-                print(f"  Generating diagram for: {tgt}")
-                hr()
+                print(); hr()
+                print(f"  Generating diagram for: {tgt}"); hr()
                 sub = subgraph_for_target(G_all, tgt)
                 if sub and sub.number_of_nodes() > 0:
                     ec = NOTEBOOK_EDGE_COLORS.get(GOLD_NOTEBOOK, DEFAULT_EDGE_COLOR) \
                          if tgt in gold_targets else DEFAULT_EDGE_COLOR
-                    html = make_html(
-                        sub,
-                        title        = f"ETL — {tgt}",
-                        subtitle     = f"Root trace · {sub.number_of_nodes()} nodes",
-                        accent_color = ec,
-                        stats        = {"frags":"—","ok":sub.number_of_nodes(),"errors":0},
-                    )
+                    html = make_html(sub,
+                        title=f"ETL — {tgt}",
+                        subtitle=f"Root trace · {sub.number_of_nodes()} nodes",
+                        accent_color=ec,
+                        stats={"frags":"—","ok":sub.number_of_nodes(),"errors":0})
                     save_html(OUTPUT_DIR / f"etl_target__{safe_filename(tgt)}.html", html)
                 else:
                     print(f"  ⚠️  No lineage found for {tgt}")
@@ -898,14 +843,13 @@ def run():
     # BRANCH B: Pick a specific notebook
     # ══════════════════════════════════════════════════════════════════════════
     elif scope == 1:
-        nb_names = list(nb_lineages.keys())
+        nb_names  = list(nb_lineages.keys())
         chosen_nb = nb_names[ask(
             "Which notebook?",
             [f"{n}  ({'✅' if (NOTEBOOKS_DIR/f'{n}.ipynb').exists() else '❌'})"
              for n in nb_names]
         )]
-
-        G_chosen = G_per[chosen_nb]
+        G_chosen  = G_per[chosen_nb]
         ec_chosen = NOTEBOOK_EDGE_COLORS.get(chosen_nb, DEFAULT_EDGE_COLOR)
 
         view = ask(
@@ -914,49 +858,34 @@ def run():
              f"Breakdown by target  — one file per target in {chosen_nb}"]
         )
 
-        # ── B1: Full diagram for chosen notebook ──────────────────────────────
         if view == 0:
-            print()
-            hr()
-            print(f"  Generating full diagram for {chosen_nb}...")
-            hr()
-            html = make_html(
-                G_chosen,
-                title        = f"ETL Lineage — {chosen_nb}",
-                subtitle     = f"{G_chosen.number_of_nodes()} nodes · {G_chosen.number_of_edges()} edges",
-                accent_color = ec_chosen,
-                stats        = nb_stats[chosen_nb],
-            )
+            print(); hr()
+            print(f"  Generating full diagram for {chosen_nb}..."); hr()
+            html = make_html(G_chosen,
+                title=f"ETL Lineage — {chosen_nb}",
+                subtitle=f"{G_chosen.number_of_nodes()} nodes · {G_chosen.number_of_edges()} edges",
+                accent_color=ec_chosen, stats=nb_stats[chosen_nb])
             save_html(OUTPUT_DIR / f"etl_notebook__{safe_filename(chosen_nb)}.html", html)
 
-        # ── B2: Per-target for chosen notebook ────────────────────────────────
         elif view == 1:
-            targets_in_nb = sorted(
-                n for n, d in G_chosen.nodes(data=True)
-                if d.get("node_type") == "target"
-            )
+            targets_in_nb = sorted(n for n, d in G_chosen.nodes(data=True)
+                                   if d.get("node_type") == "target")
             if not targets_in_nb:
                 print(f"  ⚠️  No targets found in {chosen_nb}")
             else:
-                print()
-                hr()
-                print(f"  Generating {len(targets_in_nb)} diagram(s) for {chosen_nb}...")
-                hr()
+                print(); hr()
+                print(f"  Generating {len(targets_in_nb)} diagram(s) for {chosen_nb}..."); hr()
                 for tgt in targets_in_nb:
                     sub = subgraph_for_target(G_chosen, tgt)
-                    if not sub or sub.number_of_nodes() == 0:
-                        continue
-                    html = make_html(
-                        sub,
-                        title        = f"ETL — {tgt}",
-                        subtitle     = f"{chosen_nb} · {sub.number_of_nodes()} nodes",
-                        accent_color = ec_chosen,
-                        stats        = {"frags":"—","ok":sub.number_of_nodes(),"errors":0},
-                    )
+                    if not sub or sub.number_of_nodes() == 0: continue
+                    html = make_html(sub,
+                        title=f"ETL — {tgt}",
+                        subtitle=f"{chosen_nb} · {sub.number_of_nodes()} nodes",
+                        accent_color=ec_chosen,
+                        stats={"frags":"—","ok":sub.number_of_nodes(),"errors":0})
                     fname = f"etl_{safe_filename(chosen_nb)}__{safe_filename(tgt)}.html"
                     save_html(OUTPUT_DIR / fname, html)
 
-    # ── Done ──────────────────────────────────────────────────────────────────
     print()
     hr("═")
     print(f"  Done. Diagrams saved to: {OUTPUT_DIR}")
